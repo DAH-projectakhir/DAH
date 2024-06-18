@@ -1,4 +1,3 @@
-
 function quickAudit() {
 
     $params = @{
@@ -8,6 +7,7 @@ function quickAudit() {
     $report = Get-GPOReport @params
     $xml = [xml]$report
 
+    $defaultdomain = $xml.GPOS.GPO | Where-Object {($_.Name -eq "Default Domain Policy") -or ($_.Name -eq "Default Domain Controllers Policy")}
     $origin = $xml.GPOS.GPO | Where-Object {($_.Name -ne "Default Domain Policy") -and ($_.Name -ne "Default Domain Controllers Policy")}
 
     $enctypes =  $origin.Computer.ExtensionData.Extension.SecurityOptions | Where-Object {$_.KeyName -eq "MACHINE\Software\Microsoft\Windows\CurrentVersion\Policies\System\Kerberos\Parameters\SupportedEncryptionTypes"}
@@ -19,8 +19,8 @@ function quickAudit() {
         Write-Host "Kerberos encryption is enforced to use AES." -ForegroundColor Green
     }
 
+    $deftickets = $defaultdomain.Computer.ExtensionData.Extension.Account | Where-Object {$_.Type -eq "Kerberos"}
     $tickets = $origin.Computer.ExtensionData.Extension.Account | Where-Object {$_.Type -eq "Kerberos"}
-
     $maxrenew = 0
     $maxservice = 0
     $maxticketage = 0
@@ -32,10 +32,29 @@ function quickAudit() {
         }
     }
 
+    if ($maxrenew -eq 0) {
+        foreach ($policy in $deftickets) {
+            if ($policy.Name -eq "MaxRenewAge") {
+                $maxrenew = [int]$policy.SettingNumber
+                break
+            }    
+        }
+    }
+
+
     foreach ($policy in $tickets) {
         if ($policy.Name -eq "MaxTicketAge") {
             $maxticketage = [int]$policy.SettingNumber
             break
+        }
+    }
+
+    if ($maxticketage -eq 0) {
+        foreach ($policy in $deftickets) {
+            if ($policy.Name -eq "MaxRenewAge") {
+                $maxticketage = [int]$policy.SettingNumber
+                break
+            }    
         }
     }
 
@@ -46,6 +65,16 @@ function quickAudit() {
         }
     }
 
+    if ($maxservice -eq 0) {
+        foreach ($policy in $deftickets) {
+            if ($policy.Name -eq "MaxRenewAge") {
+                $maxservice = [int]$policy.SettingNumber
+                break
+            }    
+        }
+    }
+
+    
     if ($maxrenew -gt 7) {
         Write-Host "Ticket Max Renewal is $maxrenew days. Consider decreasing it to at most 7 days." -ForegroundColor Red
     } else {
@@ -55,7 +84,7 @@ function quickAudit() {
     if ($maxservice -gt 10) {
         Write-Host "Service Max Renewal is $maxservice minutes. Consider decreasing it to at most 10 minutes." -ForegroundColor Red
     } else {
-        Write-Host "Service Max Renewal is $maxservice days." -ForegroundColor Green
+        Write-Host "Service Max Renewal is $maxservice minutes." -ForegroundColor Green
     }
 
     if ($maxticketage -gt 10) {
@@ -64,6 +93,7 @@ function quickAudit() {
         Write-Host "Max Ticket Age is $maxticketage hours." -ForegroundColor Green
     }
 
+    $deflockout = $defaultdomain.Computer.ExtensionData.Extension.Account | Where-Object {$_.Type -eq "Account Lockout"}
     $lockout = $origin.Computer.ExtensionData.Extension.Account | Where-Object {$_.Type -eq "Account Lockout"}
 
     $LockoutBadCount = 0
@@ -77,6 +107,15 @@ function quickAudit() {
         }
     }
 
+    if ($LockoutBadCount -eq 0) {
+        foreach ($policy in $deflockout) {
+            if ($policy.Name -eq "LockoutBadCount") {
+                $LockoutBadCount = [int]$policy.SettingNumber
+                break
+            }    
+        }
+    }
+
     foreach ($policy in $lockout) {
         if ($policy.Name -eq "LockoutDuration") {
             $LockoutDuration = [int]$policy.SettingNumber
@@ -84,10 +123,28 @@ function quickAudit() {
         }
     }
 
+    if ($LockoutDuration -eq 0) {
+        foreach ($policy in $deflockout) {
+            if ($policy.Name -eq "LockoutDuration") {
+                $LockoutDuration = [int]$policy.SettingNumber
+                break
+            }    
+        }
+    }
+
     foreach ($policy in $lockout) {
         if ($policy.Name -eq "ResetLockoutCount") {
             $ResetLockoutCount = [int]$policy.SettingNumber
             break
+        }
+    }
+
+    if ($LockoutDuration -eq 0) {
+        foreach ($policy in $deflockout) {
+            if ($policy.Name -eq "ResetLockoutCount") {
+                $ResetLockoutCount = [int]$policy.SettingNumber
+                break
+            }
         }
     }
 
@@ -109,7 +166,7 @@ function quickAudit() {
         Write-Host "Lockout reset duration is $ResetLockoutCount minutes." -ForegroundColor Green
     }
 
-
+    $defpasswd = $defaultdomain.Computer.ExtensionData.Extension.Account | Where-Object {$_.Type -eq "Password"}
     $passwd = $origin.Computer.ExtensionData.Extension.Account | Where-Object {$_.Type -eq "Password"}
 
     $MaximumPasswordAge = 0
@@ -122,6 +179,15 @@ function quickAudit() {
         if ($policy.Name -eq "MaximumPasswordAge") {
             $MaximumPasswordAge = [int]$policy.SettingNumber
             break
+        }
+    }
+
+    if ($MaximumPasswordAge -eq 0) {
+        foreach ($policy in $defpasswd) {
+            if ($policy.Name -eq "MaximumPasswordAge") {
+                $MaximumPasswordAge = [int]$policy.SettingNumber
+                break
+            }
         }
     }
 
@@ -138,7 +204,16 @@ function quickAudit() {
         }
     }
 
-    if ($MinimumPasswordAge -gt 90) {
+    if ($MinimumPasswordAge -eq 0) {
+        foreach ($policy in $defpasswd) {
+            if ($policy.Name -eq "MinimumPasswordAge") {
+                $MinimumPasswordAge = [int]$policy.SettingNumber
+                break
+            }
+        }
+    }
+
+    if ($MinimumPasswordAge -eq 0) {
         Write-Host "Min password age is $MinimumPasswordAge days. Microsoft's guideline suggests adjusting it to 1 day. This prevents rapid password changes."  -ForegroundColor Red
     } else {
         Write-Host "Min password age is $MinimumPasswordAge days." -ForegroundColor Green
@@ -148,6 +223,15 @@ function quickAudit() {
         if ($policy.Name -eq "MinimumPasswordLength") {
             $MinimumPasswordLength = [int]$policy.SettingNumber
             break
+        }
+    }
+
+    if ($MinimumPasswordLength -eq 0) {
+        foreach ($policy in $defpasswd) {
+            if ($policy.Name -eq "MinimumPasswordLength") {
+                $MinimumPasswordLength = [int]$policy.SettingNumber
+                break
+            }
         }
     }
 
@@ -165,6 +249,15 @@ function quickAudit() {
     }
 
     if ($PasswordComplexity -ne 'true') {
+        foreach ($policy in $defpasswd) {
+            if ($policy.Name -eq "PasswordComplexity") {
+                $PasswordComplexity = $policy.SettingBoolean
+                break
+            }
+        }
+    }
+
+    if ($PasswordComplexity -ne 'true') {
         Write-Host "Password complexity is disabled. Enabling complexity increases the password strength."  -ForegroundColor Red
     } else {
         Write-Host "Password complexity is enabled." -ForegroundColor Green
@@ -174,6 +267,15 @@ function quickAudit() {
         if ($policy.Name -eq "PasswordHistorySize") {
             $PasswordHistorySize = [int]$policy.SettingNumber
             break
+        }
+    }
+
+    if ($PasswordHistorySize -eq 0) {
+        foreach ($policy in $defpasswd) {
+            if ($policy.Name -eq "PasswordHistorySize") {
+                $PasswordHistorySize = [int]$policy.SettingNumber
+                break
+            }
         }
     }
 
@@ -188,9 +290,8 @@ function quickAudit() {
 function linkGPO($gpo_name) {
     $currDomain = Get-ADDomain -Current LoggedOnUser | Select DistinguishedName
     foreach ($d in $currDomain) {
-        Write-Host "Current Domain:" $d.DistinguishedName
-        Write-Host "Linking:" $gpo_name
-        New-GPLink -Name $gpo_name -Target $d.DistinguishedName -LinkEnabled Yes -Enforced Yes
+        $linking = New-GPLink -Name $gpo_name -Target $d.DistinguishedName -LinkEnabled Yes -Enforced Yes 2>$null
+        Write-Host "Linked : $gpo_name" -ForegroundColor Green
     }
 }
 
@@ -202,9 +303,20 @@ function ImportGPOLocal($gpo_id, $gpo_name) {
         path           = '.\GPO'
         CreateIfNeeded = $true
     }
-    Import-GPO @params
-    Write-Host "Successfully imported GPO" $gpo_name -ForegroundColor Green
-    linkGPO($gpo_name)  
+    $currDomain = Get-ADDomain -Current LoggedOnUser | Select DistinguishedName
+    $linkedGPO = Get-GPInheritance -Target $currDomain.DistinguishedName | Select-Object -ExpandProperty GpoLinks | Select Displayname 2>$null
+    foreach ($GPO in $linkedGPO) {
+        if ($GPO.Displayname -eq $gpo_name) {
+            Write-Host "The GPO '$gpo_name' is already imported and linked. Importing aborted." -ForegroundColor Yellow
+            return
+        }
+    }
+
+    $importing = Import-GPO @params 2>$null
+    Write-Host "Imported : $gpo_name" -ForegroundColor Green
+    linkGPO($gpo_name)
+
+    
 }
 
 function PromptUser($gpo_name, $gpo_desc, $gpo_id) {
@@ -261,8 +373,10 @@ Write-Host "
         |       |       |    __  | |_|   |    ___|  _    |   |  _    |   ||  |                                   
         |   _   |   _   |   |  | |       |   |___| | |   |   | | |   |   |_| |                                   
         |__| |__|__| |__|___|  |_|______||_______|_|  |__|___|_|  |__|_______|                                   " -ForegroundColor Green
+
 while($True){
         Write-Host "
+
                #      |            Name            |                                       Description                                        
          -------------|----------------------------|------------------------------------------------------------------------------------------ 
           0           | Exit                       | Exits script.                                                                            
@@ -272,7 +386,9 @@ while($True){
           4           | Password Policy            | This policy will apply a password policy using Microsoft's recommended standard.         
           5           | Account Lockout Policy     | This policy will apply an account lockout policy using Microsoft's recommended standard. 
           6           | Check current configuration| This will run a check on the currently used domain policy configuration.
-          7           | Enable Kerberos Event Logs | This will apply a policy to enable Kerberos ticket event logging.  "
+          7           | Enable Kerberos Event Logs | This will apply a policy to enable Kerberos ticket event logging.  
+          
+          "
 
         $answer = "0"
         $answer = Read-Host "Please select an option"
@@ -299,8 +415,10 @@ while($True){
             $GPO = $GPOLIST[4]
             PromptUser $GPO.name $GPO.desc $GPO.id
         } elseif ($answer -eq "0") {
-            "Exiting script."
+             Write-Host "Exiting script." -ForegroundColor Yellow
             return 
+        } else {
+            Write-Host "Please enter a valid option." -ForegroundColor Yellow
         }
     }
 }
